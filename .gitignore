@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Histórico local (gerado em cada máquina)
+historico/
+
+# Output gerado pelo main.py (cada usuário gera o seu)
+curva_di_dashboard.xlsx
+
+# Arquivos temporários do Excel
+~$*.xlsx
+~$*.xls
+
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Claude Code
+.claude/
