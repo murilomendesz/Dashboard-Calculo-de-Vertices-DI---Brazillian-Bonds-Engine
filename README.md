@@ -9,6 +9,10 @@
 
 ## PT-BR
 
+-- Caso não queira rodar o código completo main.py, você pode ver uma prévia do resultado fazendo o download do arquivo Amostra_do_projeto.xlsx
+
+				Espero que aprecie meu projeto, dediquei-me por um bom tempo para faze-lo :)
+
 ### Introdução
 
 A curva de juros prefixada é a espinha dorsal do mercado de renda fixa brasileiro. Ela mostra o preço do dinheiro no tempo — quanto o mercado exige de retorno para emprestar por 1 mês, 6 meses, 2 anos, 5 anos. Tudo o que envolve taxa de juros no Brasil passa por ela.
