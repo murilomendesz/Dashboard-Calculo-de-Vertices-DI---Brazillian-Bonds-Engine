@@ -21,13 +21,15 @@ A curva de juros prefixada é a espinha dorsal do mercado de renda fixa brasilei
 
 **Para o investidor pessoa física**, entender a curva responde perguntas práticas: vale mais comprar um CDB de 1 ano ou 3 anos agora? A curva está invertida — o mercado está precificando queda de juros no futuro. Essa leitura muda a estratégia de alocação.
 
-Este projeto busca os dados diretamente da ANBIMA, interpola a curva completa e entrega um dashboard Excel com gráfico, consulta de taxas, precificação de LTN e análise de movimentos — tudo com um único comando.
+Este projeto busca os dados diretamente da ANBIMA, interpola a curva completa e entrega um dashboard Excel com gráfico, consulta de taxas, precificação de LTN e análise de movimentos.
 
 **Interpolação de taxas** é o processo de estimar a taxa de juros para prazos onde não há negociação direta no mercado.
 
 Na prática, como a curva de juros tem apenas alguns pontos conhecidos (os vértices, como contratos de DI com vencimentos específicos), usamos métodos de interpolação para “preencher os espaços” entre eles e construir uma curva contínua.
 
 Isso permite calcular taxas para qualquer prazo intermediário, o que é essencial para precificação de ativos e análise de risco no dia a dia de uma mesa.
+
+**Comandos necessários para o código funcionar:**
 
 ```bash
 pip install -r requirements.txt
