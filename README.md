@@ -15,13 +15,19 @@
 
 ### Introdução
 
-A curva de juros prefixada é a espinha dorsal do mercado de renda fixa brasileiro. Ela mostra o preço do dinheiro no tempo — quanto o mercado exige de retorno para emprestar por 1 mês, 6 meses, 2 anos, 5 anos. Tudo o que envolve taxa de juros no Brasil passa por ela.
+A curva de juros prefixada é a espinha dorsal do mercado de renda fixa brasileiro. Ela mostra o preço do dinheiro no tempo, quanto o mercado exige de retorno para emprestar por 1 mês, 6 meses, 2 anos, 5 anos. Tudo o que envolve taxa de juros no Brasil passa por ela.
 
 **Para uma trading desk**, a curva é ferramenta de trabalho diária: precificação de títulos, marcação a mercado do book, análise de movimentos (a curva abriu? fechou? inclinou?). Saber se o mercado está fazendo steepening ou flattening determina decisões de duration e hedge.
 
 **Para o investidor pessoa física**, entender a curva responde perguntas práticas: vale mais comprar um CDB de 1 ano ou 3 anos agora? A curva está invertida — o mercado está precificando queda de juros no futuro. Essa leitura muda a estratégia de alocação.
 
 Este projeto busca os dados diretamente da ANBIMA, interpola a curva completa e entrega um dashboard Excel com gráfico, consulta de taxas, precificação de LTN e análise de movimentos — tudo com um único comando.
+
+**Interpolação de taxas** é o processo de estimar a taxa de juros para prazos onde não há negociação direta no mercado.
+
+Na prática, como a curva de juros tem apenas alguns pontos conhecidos (os vértices, como contratos de DI com vencimentos específicos), usamos métodos de interpolação para “preencher os espaços” entre eles e construir uma curva contínua.
+
+Isso permite calcular taxas para qualquer prazo intermediário, o que é essencial para precificação de ativos e análise de risco no dia a dia de uma mesa.
 
 ```bash
 pip install -r requirements.txt
@@ -48,7 +54,7 @@ r_i = (1 + r_a) × [(1 + r_p) / (1 + r_a)] ^ [(du_i − du_a) / (du_p − du_a)]
 
 #### Curva Forward Mês a Mês
 
-A taxa forward implícita entre dois meses consecutivos revela o que o mercado precifica para cada período futuro isoladamente — diferente da taxa spot, que é acumulada desde hoje.
+A taxa forward implícita entre dois meses consecutivos revela o que o mercado precifica para cada período futuro isoladamente, diferente da taxa spot, que é acumulada desde hoje.
 
 ```
 fator_fwd = (1 + r_B)^(du_B/252) / (1 + r_A)^(du_A/252)
@@ -133,4 +139,4 @@ The project replicates in Python the yield curve workflow of a fixed-income desk
 
 ---
 
-**Murilo Mendes** — Economics student (UNIP), CEA-ANBIMA & AAI certified · [murilomendesz](https://github.com/murilomendesz)
+**Murilo Mendes** — Economics student, CEA-ANBIMA certified · [murilomendesz](https://github.com/murilomendesz)
