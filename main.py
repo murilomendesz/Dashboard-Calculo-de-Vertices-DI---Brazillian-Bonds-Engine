@@ -5,8 +5,8 @@ Uso:
     python main.py
 
 Fluxo:
-    1. Busca curva ETTJ de hoje via ANBIMA (pyettj)
-    2. Busca curva de ~30 dias úteis atrás (histórico ou pyettj)
+    1. Busca curva ETTJ de hoje via endpoint CSV da ANBIMA
+    2. Busca curva de ~30 dias úteis atrás (ANBIMA Dt_Ref → histórico → fallback)
     3. Interpola mensalmente (Flat Forward, 21 DU/ponto)
     4. Calcula curva forward mês a mês
     5. Classifica formato da curva

@@ -190,7 +190,7 @@ def _popular_dashboard_chart(ws_dash, curva_mensal: pd.DataFrame):
         row = 10 + idx
         du = int(bim.loc[idx, "dias_uteis"])
         ar = aux_row_for_du(du)
-        if ar:
+        if ar is not None:
             ws_dash.range(f"E{row}").formula = f"=Aux!E{ar}*100"
 
     for row, bim_idx in data_rows_extra.items():
@@ -198,7 +198,7 @@ def _popular_dashboard_chart(ws_dash, curva_mensal: pd.DataFrame):
             continue
         du = int(bim.loc[bim_idx, "dias_uteis"])
         ar = aux_row_for_du(du)
-        if ar:
+        if ar is not None:
             ws_dash.range(f"E{row}").formula = f"=Aux!E{ar}*100"
 
 
@@ -398,7 +398,7 @@ def _popular_vertice(ws_vert, curva_mensal: pd.DataFrame, data_ref: date, data_c
 # ──────────────────────────────────────────────────────────────────────────
 
 def _popular_movimentos(ws_mov, movimentos: pd.DataFrame,
-                         data_ref: date, data_comp: date, analise: dict):
+                         data_ref: date, data_comp: date):
     # Subtítulo
     ws_mov.range("B3").value = (
         f"Comparação: {data_ref.strftime('%d/%m/%Y')} vs. "
@@ -607,7 +607,7 @@ def construir_dashboard(
 
         # 8. Movimentos
         print("  Populando Movimentos...", end=" ", flush=True)
-        _popular_movimentos(ws_mov, movimentos, data_ref, data_comp, analise)
+        _popular_movimentos(ws_mov, movimentos, data_ref, data_comp)
         print(f"{time.time()-t0:.1f}s")
 
         # 9. Salvar (reativar cálculo antes de salvar)

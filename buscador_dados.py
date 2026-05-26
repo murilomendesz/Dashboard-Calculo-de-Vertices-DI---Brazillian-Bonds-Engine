@@ -9,10 +9,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ── Vértices padrão DU ───────────────────────────────────────────────────
-# 15 pontos: curto (21-84), semestral (126-1260).
-# Reduz o erro de interpolação de ~2.7 bps (10 vértices) para ~0.7 bps RMSE.
+# 13 pontos publicados pela ANBIMA (seções PREFIXADOS + ETTJ PREF).
+# DU 84 e 189 não são publicados; a interpolação flat forward os cobre.
 VERTICES_PADRAO_DU = [
-    21, 42, 63, 84, 126, 189, 252, 378,
+    21, 42, 63, 126, 252, 378,
     504, 630, 756, 882, 1008, 1134, 1260,
 ]
 
@@ -21,14 +21,14 @@ VERTICES_MOVIMENTOS = {21, 42, 63, 126, 252, 504, 756, 1008, 1260}
 
 # ── Dados estáticos de fallback ────────────────────────────────────────────
 FALLBACK_VERTICES = [
-    (21,   0.1495), (42,  0.1492), (63,  0.1489), (84,  0.1484),
-    (126,  0.1478), (189, 0.1470), (252, 0.1462), (378, 0.1454),
+    (21,   0.1495), (42,  0.1492), (63,  0.1489),
+    (126,  0.1478), (252, 0.1462), (378, 0.1454),
     (504,  0.1446), (630, 0.1440), (756, 0.1435), (882, 0.1431),
     (1008, 0.1427), (1134, 0.1426), (1260, 0.1425),
 ]
 FALLBACK_VERTICES_30D = [
-    (21,   0.1460), (42,  0.1458), (63,  0.1455), (84,  0.1450),
-    (126,  0.1442), (189, 0.1436), (252, 0.1430), (378, 0.1422),
+    (21,   0.1460), (42,  0.1458), (63,  0.1455),
+    (126,  0.1442), (252, 0.1430), (378, 0.1422),
     (504,  0.1415), (630, 0.1410), (756, 0.1405), (882, 0.1401),
     (1008, 0.1398), (1134, 0.1396), (1260, 0.1395),
 ]
@@ -160,10 +160,13 @@ def salvar_historico(data: date, curva: pd.DataFrame, historico_path: str):
         if os.path.exists(csv_path):
             _migrar_csv_para_xlsx(csv_path, historico_path)
 
-    # Verificar duplicata
+    # Verificar duplicata — sobrescrever se dados novos tiverem mais vértices
     df_existente = _ler_historico_xlsx(historico_path)
     if df_existente is not None and data in df_existente["data_referencia"].values:
-        return
+        n_existente = len(df_existente[df_existente["data_referencia"] == data])
+        if len(curva) <= n_existente:
+            return
+        df_existente = df_existente[df_existente["data_referencia"] != data].reset_index(drop=True)
 
     # Montar DataFrame total e reescrever
     df_novo = curva[["dias_uteis", "taxa"]].copy()
@@ -195,44 +198,48 @@ def _buscar_historico(data: date, historico_path: str) -> pd.DataFrame | None:
 
 
 def _buscar_data_mais_proxima(data_alvo: date, historico_path: str) -> tuple[pd.DataFrame | None, date | None]:
-    """Busca a data mais próxima disponível no histórico."""
+    """Busca a data mais próxima (antes ou depois) disponível no histórico."""
     df = _ler_historico_xlsx(historico_path)
     if df is None:
         return None, None
     datas = sorted(df["data_referencia"].unique())
     if not datas:
         return None, None
-    anteriores = [d for d in datas if d <= data_alvo]
-    data_escolhida = max(anteriores) if anteriores else min(datas)
+    data_escolhida = min(datas, key=lambda d: abs((d - data_alvo).days))
     subset = df[df["data_referencia"] == data_escolhida][["dias_uteis", "taxa"]].reset_index(drop=True)
     if len(subset) >= 5:
         return subset, data_escolhida
     return None, None
 
 
-def _buscar_anbima_csv() -> tuple[pd.DataFrame | None, date | None]:
+def _buscar_anbima_csv(data: date | None = None) -> tuple[pd.DataFrame | None, date | None]:
     """
     Busca curva prefixada direto do endpoint CSV da ANBIMA.
     Retorna (DataFrame com [dias_uteis, taxa], data_referencia) ou (None, None).
 
-    A ANBIMA mudou o endpoint de HTML → CSV. O pyettj usa pd.read_html() e quebra.
-    Este parser combina duas seções do CSV:
-      - 'PREFIXADOS (CIRCULAR 3.361)': vértices curtos em DU (21, 42, 63, ...)
-      - 'ETTJ PREF' (coluna da seção de inflação implícita): vértices intermediários
-        em DU (378, 630, 882, 1134, ...) que o pyettj entregava antes.
-    A união das duas seções recupera ~13 vértices, evitando forwards repetidos.
+    Combina duas seções do CSV:
+      - 'ETTJ PREF' (coluna da seção de inflação implícita): 126, 378, 630, …
+      - 'PREFIXADOS (CIRCULAR 3.361)': vértices curtos (21, 42, 63, …)
+
+    Se ``data`` for informada, passa Dt_Ref=dd/mm/yyyy para obter dados históricos.
+    Sem ``data``, retorna o dia mais recente publicado pela ANBIMA.
     """
     import re
     import requests
     from datetime import datetime as _dt
 
     URL = "https://www.anbima.com.br/informacoes/est-termo/CZ-down.asp"
+    params = {"Dt_Ref": _data_str(data)} if data else {}
     try:
-        r = requests.get(URL, timeout=15)
+        r = requests.get(URL, params=params, timeout=15)
         r.raise_for_status()
         texto = r.text
     except Exception as e:
         logger.warning(f"[anbima_csv] Falha na requisição: {e}")
+        return None, None
+
+    if not texto.strip():
+        logger.warning(f"[anbima_csv] Resposta vazia para {data}")
         return None, None
 
     # ── Data de referência ────────────────────────────────────────────────
@@ -246,36 +253,33 @@ def _buscar_anbima_csv() -> tuple[pd.DataFrame | None, date | None]:
             pass
 
     def _parse_br(s: str) -> float:
-        """Converte número no formato BR ('1.008,34' → 1008.34)."""
         return float(s.strip().replace(".", "").replace(",", "."))
 
     vertices: dict[int, float] = {}
 
     # ── Seção 1: ETTJ PREF (vértices intermediários: 378, 630, 882, 1134…) ──
-    # Cabeçalho: "Vertices;ETTJ IPCA;ETTJ PREF;Inflação Implícita"
     marcador_ettj = "ETTJ Infla"
     marcador_pref = "PREFIXADOS (CIRCULAR 3.361)"
     if marcador_ettj in texto and marcador_pref in texto:
         bloco_ettj = texto.split(marcador_ettj)[1].split(marcador_pref)[0]
         linhas_ettj = [l.strip() for l in bloco_ettj.splitlines() if l.strip()]
-        for linha in linhas_ettj[1:]:   # pula cabeçalho
+        for linha in linhas_ettj[1:]:
             partes = linha.split(";")
             if len(partes) < 3:
                 continue
             try:
                 du   = int(partes[0].replace(".", ""))
-                taxa = _parse_br(partes[2]) / 100.0   # coluna ETTJ PREF
+                taxa = _parse_br(partes[2]) / 100.0
                 if taxa > 0:
                     vertices[du] = taxa
             except (ValueError, IndexError):
                 continue
 
     # ── Seção 2: PREFIXADOS (CIRCULAR 3.361) — curto prazo (21, 42, 63…) ──
-    # Sobrescreve eventuais duplicatas com os valores oficiais desta seção.
     if marcador_pref in texto:
         bloco_pref = texto.split(marcador_pref)[1]
         linhas_pref = [l.strip() for l in bloco_pref.splitlines() if l.strip()]
-        for linha in linhas_pref[1:]:   # pula cabeçalho
+        for linha in linhas_pref[1:]:
             partes = linha.split(";")
             if len(partes) < 2:
                 break
@@ -285,40 +289,6 @@ def _buscar_anbima_csv() -> tuple[pd.DataFrame | None, date | None]:
                 vertices[du] = taxa
             except (ValueError, IndexError):
                 break
-
-    # ── Seção 3: Parâmetros NSS → preenche 84 e 189 DU ──────────────────────
-    # A ANBIMA publica os parâmetros Nelson-Siegel-Svensson na primeira seção.
-    # Usamos para calcular as taxas nos vértices intermediários que sumiram do CSV.
-    DU_INTERMEDIARIOS = [84, 189]
-    nss_params = None
-    linhas_todas = texto.splitlines()
-    for linha in linhas_todas[:5]:
-        if linha.startswith("PREFIXADOS;"):
-            partes = linha.split(";")
-            if len(partes) >= 7:
-                try:
-                    nss_params = [_parse_br(p) for p in partes[1:7]]
-                except ValueError:
-                    pass
-            break
-
-    if nss_params is not None:
-        import math
-        b0, b1, b2, b3, l1, l2 = nss_params
-
-        def _nss_taxa(du: int) -> float:
-            t = du / 252
-            if t <= 0:
-                return b0
-            e1 = math.exp(-t / l1)
-            e2 = math.exp(-t / l2)
-            f1 = (1 - e1) / (t / l1)
-            f2 = (1 - e2) / (t / l2)
-            return b0 + b1 * f1 + b2 * (f1 - e1) + b3 * (f2 - e2)
-
-        for du in DU_INTERMEDIARIOS:
-            if du not in vertices:
-                vertices[du] = _nss_taxa(du)
 
     if len(vertices) < 5:
         logger.warning(f"[anbima_csv] Vértices insuficientes: {len(vertices)}")
@@ -429,15 +399,25 @@ def buscar_curva_comparacao(data_ref: date, dias_atras: int, historico_path: str
     data_alvo = _dia_util_anterior(data_ref, dias_atras)
     logger.info(f"Data comparação: {data_alvo}")
 
+    # 1. ANBIMA CSV com Dt_Ref (fonte primária — busca histórica direta)
+    df, data_csv = _buscar_anbima_csv(data_alvo)
+    if df is not None:
+        data_efetiva = data_csv if data_csv is not None else data_alvo
+        salvar_historico(data_efetiva, df, historico_path)
+        return df, data_efetiva
+
+    # 2. Histórico local (exato)
     df = _buscar_historico(data_alvo, historico_path)
     if df is not None:
         return df, data_alvo
 
+    # 3. pyettj (B3) como fallback
     df = _buscar_pyettj(data_alvo)
     if df is not None:
         salvar_historico(data_alvo, df, historico_path)
         return df, data_alvo
 
+    # 4. Data mais próxima no histórico
     df, data_real = _buscar_data_mais_proxima(data_alvo, historico_path)
     if df is not None:
         logger.info(f"Usando data mais próxima: {data_real}")
