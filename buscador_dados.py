@@ -210,6 +210,129 @@ def _buscar_data_mais_proxima(data_alvo: date, historico_path: str) -> tuple[pd.
     return None, None
 
 
+def _buscar_anbima_csv() -> tuple[pd.DataFrame | None, date | None]:
+    """
+    Busca curva prefixada direto do endpoint CSV da ANBIMA.
+    Retorna (DataFrame com [dias_uteis, taxa], data_referencia) ou (None, None).
+
+    A ANBIMA mudou o endpoint de HTML → CSV. O pyettj usa pd.read_html() e quebra.
+    Este parser combina duas seções do CSV:
+      - 'PREFIXADOS (CIRCULAR 3.361)': vértices curtos em DU (21, 42, 63, ...)
+      - 'ETTJ PREF' (coluna da seção de inflação implícita): vértices intermediários
+        em DU (378, 630, 882, 1134, ...) que o pyettj entregava antes.
+    A união das duas seções recupera ~13 vértices, evitando forwards repetidos.
+    """
+    import re
+    import requests
+    from datetime import datetime as _dt
+
+    URL = "https://www.anbima.com.br/informacoes/est-termo/CZ-down.asp"
+    try:
+        r = requests.get(URL, timeout=15)
+        r.raise_for_status()
+        texto = r.text
+    except Exception as e:
+        logger.warning(f"[anbima_csv] Falha na requisição: {e}")
+        return None, None
+
+    # ── Data de referência ────────────────────────────────────────────────
+    data_ref = None
+    primeira_linha = texto.splitlines()[0]
+    match = re.match(r"(\d{2}/\d{2}/\d{4})", primeira_linha)
+    if match:
+        try:
+            data_ref = _dt.strptime(match.group(1), "%d/%m/%Y").date()
+        except Exception:
+            pass
+
+    def _parse_br(s: str) -> float:
+        """Converte número no formato BR ('1.008,34' → 1008.34)."""
+        return float(s.strip().replace(".", "").replace(",", "."))
+
+    vertices: dict[int, float] = {}
+
+    # ── Seção 1: ETTJ PREF (vértices intermediários: 378, 630, 882, 1134…) ──
+    # Cabeçalho: "Vertices;ETTJ IPCA;ETTJ PREF;Inflação Implícita"
+    marcador_ettj = "ETTJ Infla"
+    marcador_pref = "PREFIXADOS (CIRCULAR 3.361)"
+    if marcador_ettj in texto and marcador_pref in texto:
+        bloco_ettj = texto.split(marcador_ettj)[1].split(marcador_pref)[0]
+        linhas_ettj = [l.strip() for l in bloco_ettj.splitlines() if l.strip()]
+        for linha in linhas_ettj[1:]:   # pula cabeçalho
+            partes = linha.split(";")
+            if len(partes) < 3:
+                continue
+            try:
+                du   = int(partes[0].replace(".", ""))
+                taxa = _parse_br(partes[2]) / 100.0   # coluna ETTJ PREF
+                if taxa > 0:
+                    vertices[du] = taxa
+            except (ValueError, IndexError):
+                continue
+
+    # ── Seção 2: PREFIXADOS (CIRCULAR 3.361) — curto prazo (21, 42, 63…) ──
+    # Sobrescreve eventuais duplicatas com os valores oficiais desta seção.
+    if marcador_pref in texto:
+        bloco_pref = texto.split(marcador_pref)[1]
+        linhas_pref = [l.strip() for l in bloco_pref.splitlines() if l.strip()]
+        for linha in linhas_pref[1:]:   # pula cabeçalho
+            partes = linha.split(";")
+            if len(partes) < 2:
+                break
+            try:
+                du   = int(partes[0].replace(".", ""))
+                taxa = _parse_br(partes[1]) / 100.0
+                vertices[du] = taxa
+            except (ValueError, IndexError):
+                break
+
+    # ── Seção 3: Parâmetros NSS → preenche 84 e 189 DU ──────────────────────
+    # A ANBIMA publica os parâmetros Nelson-Siegel-Svensson na primeira seção.
+    # Usamos para calcular as taxas nos vértices intermediários que sumiram do CSV.
+    DU_INTERMEDIARIOS = [84, 189]
+    nss_params = None
+    linhas_todas = texto.splitlines()
+    for linha in linhas_todas[:5]:
+        if linha.startswith("PREFIXADOS;"):
+            partes = linha.split(";")
+            if len(partes) >= 7:
+                try:
+                    nss_params = [_parse_br(p) for p in partes[1:7]]
+                except ValueError:
+                    pass
+            break
+
+    if nss_params is not None:
+        import math
+        b0, b1, b2, b3, l1, l2 = nss_params
+
+        def _nss_taxa(du: int) -> float:
+            t = du / 252
+            if t <= 0:
+                return b0
+            e1 = math.exp(-t / l1)
+            e2 = math.exp(-t / l2)
+            f1 = (1 - e1) / (t / l1)
+            f2 = (1 - e2) / (t / l2)
+            return b0 + b1 * f1 + b2 * (f1 - e1) + b3 * (f2 - e2)
+
+        for du in DU_INTERMEDIARIOS:
+            if du not in vertices:
+                vertices[du] = _nss_taxa(du)
+
+    if len(vertices) < 5:
+        logger.warning(f"[anbima_csv] Vértices insuficientes: {len(vertices)}")
+        return None, None
+
+    result = (
+        pd.DataFrame(list(vertices.items()), columns=["dias_uteis", "taxa"])
+        .sort_values("dias_uteis")
+        .reset_index(drop=True)
+    )
+    logger.info(f"[anbima_csv] {data_ref}: {len(result)} vértices")
+    return result, data_ref
+
+
 def _buscar_pyettj(data: date) -> pd.DataFrame | None:
     """Busca via pyettj — extrai taxas nos vértices padrão DU."""
     try:
@@ -265,24 +388,39 @@ def _fallback_estatico(tipo: str = "hoje") -> pd.DataFrame:
 # ── Funções públicas ───────────────────────────────────────────────────────
 
 def buscar_curva(data: date, historico_path: str) -> pd.DataFrame:
-    """Busca curva ETTJ. Ordem: pyettj hoje → pyettj dia anterior → histórico local → fallback."""
+    """
+    Busca curva ETTJ.
+    Ordem: ANBIMA CSV direto → pyettj → histórico local → fallback estático.
+    """
+    # 1. ANBIMA CSV (endpoint atualizado — substitui pyettj como fonte primária)
+    df, data_csv = _buscar_anbima_csv()
+    if df is not None:
+        data_efetiva = data_csv if data_csv is not None else data
+        salvar_historico(data_efetiva, df, historico_path)
+        if data_csv and data_csv < data:
+            logger.warning(
+                f"ANBIMA ainda não publicou dados para {data.strftime('%d/%m/%Y')} — "
+                f"usando dados disponíveis de {data_csv.strftime('%d/%m/%Y')}."
+            )
+        return df
+
+    # 2. pyettj (fallback caso o endpoint CSV mude novamente)
     df = _buscar_pyettj(data)
     if df is not None:
         salvar_historico(data, df, historico_path)
         return df
-    # ANBIMA ainda não publicou hoje — busca o dia útil anterior direto no pyettj
     data_anterior = _dia_util_anterior(data, 1)
     df = _buscar_pyettj(data_anterior)
     if df is not None:
         salvar_historico(data_anterior, df, historico_path)
-        logger.warning(
-            f"ANBIMA ainda não publicou dados para {data.strftime('%d/%m/%Y')} — "
-            f"usando dados do dia anterior ({data_anterior.strftime('%d/%m/%Y')})."
-        )
         return df
+
+    # 3. Histórico local
     df = _buscar_historico(data, historico_path)
     if df is not None:
         return df
+
+    # 4. Último recurso
     return _fallback_estatico("hoje")
 
 
